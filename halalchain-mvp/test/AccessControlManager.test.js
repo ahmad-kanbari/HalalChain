@@ -47,9 +47,9 @@ describe("AccessControlManager", function () {
             const [owner, shariaBoard] = await ethers.getSigners();
             const AccessControlManager = await ethers.getContractFactory("AccessControlManager");
 
-            const deployTx = AccessControlManager.deploy(shariaBoard.address);
-            const accessControl = await deployTx;
-            
+            const accessControl = await AccessControlManager.deploy(shariaBoard.address);
+            const deployTx = accessControl.deploymentTransaction();
+
             await expect(deployTx)
                 .to.emit(accessControl, "RoleSetupCompleted")
                 .withArgs(owner.address);

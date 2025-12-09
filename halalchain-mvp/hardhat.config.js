@@ -19,13 +19,13 @@ export default {
         bscTestnet: {
             url: "https://data-seed-prebsc-1-s1.binance.org:8545",
             chainId: 97,
-            accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+            accounts: (process.env.PRIVATE_KEY && process.env.PRIVATE_KEY.length === 66) ? [process.env.PRIVATE_KEY] : [],
         },
         // Mainnet config for later
         bsc: {
             url: "https://bsc-dataseed.binance.org/",
             chainId: 56,
-            accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+            accounts: (process.env.PRIVATE_KEY && process.env.PRIVATE_KEY.length === 66) ? [process.env.PRIVATE_KEY] : [],
         },
     },
     etherscan: {

@@ -42,7 +42,7 @@ describe("HalalToken", function () {
     });
 
     it("Should not allow non-admin to pause", async function () {
-        await expect(halalToken.connect(addr1).pause()).to.be.revertedWithCustomError(halalToken, "AccessControlUnauthorizedAccount");
+        await expect(halalToken.connect(addr1).pause()).to.be.revertedWith("AccessControlUnauthorizedAccount");
     });
 
     it("Should burn tokens", async function () {

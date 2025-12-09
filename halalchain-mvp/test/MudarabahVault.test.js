@@ -15,26 +15,26 @@ describe("MudarabahVault", function () {
         // Deploy dependencies
         const AccessControlManager = await ethers.getContractFactory("AccessControlManager");
         accessControl = await AccessControlManager.deploy(owner.address);
-        
+
         const OPERATOR_ROLE = await accessControl.OPERATOR_ROLE();
         await accessControl.grantRole(OPERATOR_ROLE, owner.address);
-        
+
         const MockAggregator = await ethers.getContractFactory("MockChainlinkAggregator");
         goldPriceFeed = await MockAggregator.deploy(8, "Gold/USD");
         goldReserveFeed = await MockAggregator.deploy(8, "Gold Reserve");
-        
+
         await goldPriceFeed.updateAnswer(6000000000);
         await goldReserveFeed.updateAnswer(100000000000000);
-        
+
         const ShariaRegistry = await ethers.getContractFactory("ShariaRegistry");
         shariaRegistry = await ShariaRegistry.deploy(accessControl.target);
-        
+
         const OracleHub = await ethers.getContractFactory("OracleHub");
         oracleHub = await OracleHub.deploy(accessControl.target);
-        
+
         await oracleHub.setFeed(goldPriceFeed.target, goldPriceFeed.target, 3600);
         await oracleHub.setFeed(goldReserveFeed.target, goldReserveFeed.target, 3600);
-        
+
         HalGold = await ethers.getContractFactory("HalGoldStablecoin");
         halGold = await HalGold.deploy(
             accessControl.target,
@@ -43,7 +43,7 @@ describe("MudarabahVault", function () {
             goldReserveFeed.target,
             goldPriceFeed.target
         );
-        
+
         await shariaRegistry.registerFatwa(halGold.target, "QmTest", [owner.address]);
 
         Vault = await ethers.getContractFactory("MudarabahVault");
@@ -70,7 +70,7 @@ describe("MudarabahVault", function () {
 
         // Admin (Owner) adds profit (e.g. 10 tokens)
         // Need tokens for admin first
-        await halGold.mint(ethers.parseUnits("100", 18), { value: ethers.parseEther("100") });
+        await halGold.mint(owner.address, ethers.parseUnits("100", 18));
         await halGold.approve(await vault.getAddress(), ethers.parseUnits("10", 18));
 
         // Add 10 profit
@@ -95,7 +95,7 @@ describe("MudarabahVault", function () {
         await vault.connect(user1).deposit(startAmount);
 
         // Add profit 10 (Net 8)
-        await halGold.mint(ethers.parseUnits("100", 18), { value: ethers.parseEther("100") });
+        await halGold.mint(owner.address, ethers.parseUnits("100", 18));
         await halGold.approve(await vault.getAddress(), ethers.parseUnits("10", 18));
         await vault.distributeProfit(ethers.parseUnits("10", 18));
 

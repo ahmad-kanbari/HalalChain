@@ -57,11 +57,7 @@ describe("Integration Flow", function () {
         await shariaRegistry.connect(shariaBoard).registerFatwa(halGold.target, "QmHalGoldFatwa", [shariaBoard.address]);
 
         Vault = await ethers.getContractFactory("MudarabahVault");
-        vault = await Vault.deploy(
-            halGold.target,
-            accessControl.target,
-            shariaRegistry.target
-        );
+        vault = await Vault.deploy(halGold.target);
 
         await shariaRegistry.connect(shariaBoard).registerFatwa(vault.target, "QmVaultFatwa", [shariaBoard.address]);
     });
@@ -73,22 +69,22 @@ describe("Integration Flow", function () {
         expect(await halGold.balanceOf(user.address)).to.equal(mintAmt);
 
         // 2. User deposits to Vault
-        await halGold.connect(user).approve(vault.target, mintAmt);
-        await vault.connect(user).deposit(mintAmt, user.address);
+        await halGold.connect(user).approve(await vault.getAddress(), mintAmt);
+        await vault.connect(user).deposit(mintAmt);
 
         expect(await halGold.balanceOf(user.address)).to.equal(0);
-        
+
         // 3. Simulate profit distribution
         const profitAmt = ethers.parseEther("100");
         await halGold.connect(owner).mint(owner.address, profitAmt);
-        await halGold.connect(owner).transfer(vault.target, profitAmt);
+        await halGold.connect(owner).approve(await vault.getAddress(), profitAmt);
+        await vault.connect(owner).distributeProfit(profitAmt);
 
         // 4. User withdraws (should get original + profit minus fees)
-        const userShares = await vault.balanceOf(user.address);
-        const assets = await vault.previewRedeem(userShares);
-        
-        await vault.connect(user).redeem(userShares, user.address, user.address);
-        
+        const userShares = await vault.shares(user.address);
+
+        await vault.connect(user).withdraw(userShares);
+
         // User should have more than initial deposit due to profit
         expect(await halGold.balanceOf(user.address)).to.be.gt(mintAmt);
     });

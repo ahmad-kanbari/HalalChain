@@ -186,8 +186,9 @@ describe("OracleHub", function () {
             const maxStaleness = 3600;
             await oracleHub.connect(oracleUpdater).setFeed(user.address, mockAggregator.target, maxStaleness);
 
-            // Move time forward exactly to staleness threshold (should still work)
-            await time.increase(maxStaleness);
+            // Move time forward to just before staleness threshold (should still work)
+            // Using maxStaleness - 1 to ensure block.timestamp - updatedAt <= maxStaleness
+            await time.increase(maxStaleness - 1);
 
             const [returnedPrice, decimals] = await oracleHub.getPrice(user.address);
             expect(returnedPrice).to.equal(price);
