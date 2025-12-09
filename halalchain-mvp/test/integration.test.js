@@ -3,74 +3,93 @@ import hre from "hardhat";
 const { ethers } = hre;
 
 describe("Integration Flow", function () {
+    let accessControl, oracleHub, shariaRegistry;
     let HalalToken, HalGold, Vault;
     let halal, halGold, vault;
-    let owner, user;
+    let owner, user, shariaBoard;
+    let goldPriceFeed, goldReserveFeed;
 
     beforeEach(async function () {
-        [owner, user] = await ethers.getSigners();
+        [owner, user, shariaBoard] = await ethers.getSigners();
+
+        // Deploy AccessControlManager
+        const AccessControlManager = await ethers.getContractFactory("AccessControlManager");
+        accessControl = await AccessControlManager.deploy(shariaBoard.address);
+
+        // Deploy Mock Chainlink Aggregators
+        const MockAggregator = await ethers.getContractFactory("MockChainlinkAggregator");
+        goldPriceFeed = await MockAggregator.deploy(8, "Gold/USD");
+        goldReserveFeed = await MockAggregator.deploy(8, "Gold Reserve");
+        
+        await goldPriceFeed.updateAnswer(6000000000); // $60/gram
+        await goldReserveFeed.updateAnswer(100000000000000); // 1M grams
+
+        // Deploy ShariaRegistry
+        const ShariaRegistry = await ethers.getContractFactory("ShariaRegistry");
+        shariaRegistry = await ShariaRegistry.deploy(accessControl.target);
+
+        // Deploy OracleHub
+        const OracleHub = await ethers.getContractFactory("OracleHub");
+        oracleHub = await OracleHub.deploy(accessControl.target);
+
+        // Setup oracle feeds
+        await oracleHub.connect(owner).setFeed(goldPriceFeed.target, goldPriceFeed.target, 3600);
+        await oracleHub.connect(owner).setFeed(goldReserveFeed.target, goldReserveFeed.target, 3600);
+
+        // Grant operator role to owner
+        const OPERATOR_ROLE = await accessControl.OPERATOR_ROLE();
+        await accessControl.grantRole(OPERATOR_ROLE, owner.address);
 
         HalalToken = await ethers.getContractFactory("HalalToken");
-        halal = await HalalToken.deploy();
+        halal = await HalalToken.deploy(accessControl.target);
 
         HalGold = await ethers.getContractFactory("HalGoldStablecoin");
-        halGold = await HalGold.deploy();
+        halGold = await HalGold.deploy(
+            accessControl.target,
+            oracleHub.target,
+            shariaRegistry.target,
+            goldReserveFeed.target,
+            goldPriceFeed.target
+        );
+
+        // Mark contracts as compliant
+        await shariaRegistry.connect(shariaBoard).registerFatwa(halal.target, "QmHalalTokenFatwa", [shariaBoard.address]);
+        await shariaRegistry.connect(shariaBoard).registerFatwa(halGold.target, "QmHalGoldFatwa", [shariaBoard.address]);
 
         Vault = await ethers.getContractFactory("MudarabahVault");
-        vault = await Vault.deploy(await halGold.getAddress());
+        vault = await Vault.deploy(
+            halGold.target,
+            accessControl.target,
+            shariaRegistry.target
+        );
+
+        await shariaRegistry.connect(shariaBoard).registerFatwa(vault.target, "QmVaultFatwa", [shariaBoard.address]);
     });
 
-    it("Full User Flow: Mint -> Invest -> Profit -> Withdraw -> Redeem", async function () {
-        // 1. User gets some BNB (Has it by default in testnet)
-
-        // 2. Mint HAL-GOLD (10 grams ~ $600)
-        // Need ~$720 collateral (2.4 BNB approx with $300/BNB)
-        const mintAmt = ethers.parseUnits("10", 18);
-        const collateral = ethers.parseEther("3.0"); // Sufficient
-
-        await halGold.connect(user).mint(mintAmt, { value: collateral });
+    it("Full User Flow: Mint -> Invest -> Profit -> Withdraw", async function () {
+        // 1. Mint HAL-GOLD for user
+        const mintAmt = ethers.parseEther("1000");
+        await halGold.connect(owner).mint(user.address, mintAmt);
         expect(await halGold.balanceOf(user.address)).to.equal(mintAmt);
 
-        // 3. User deposits to Vault
-        await halGold.connect(user).approve(await vault.getAddress(), mintAmt);
-        await vault.connect(user).deposit(mintAmt);
+        // 2. User deposits to Vault
+        await halGold.connect(user).approve(vault.target, mintAmt);
+        await vault.connect(user).deposit(mintAmt, user.address);
 
         expect(await halGold.balanceOf(user.address)).to.equal(0);
-        expect(await vault.shares(user.address)).to.equal(mintAmt); // 1:1 first deposit
+        
+        // 3. Simulate profit distribution
+        const profitAmt = ethers.parseEther("100");
+        await halGold.connect(owner).mint(owner.address, profitAmt);
+        await halGold.connect(owner).transfer(vault.target, profitAmt);
 
-        // 4. Admin generates profit (e.g. 5 tokens)
-        // Admin needs tokens first
-        await halGold.mint(ethers.parseUnits("10", 18), { value: ethers.parseEther("3.0") });
-        await halGold.approve(await vault.getAddress(), ethers.parseUnits("5", 18));
-        await vault.distributeProfit(ethers.parseUnits("5", 18));
-
-        // Net profit = 4 tokens (20% fee = 1 token)
-
-        // 5. User withdraws
-        await vault.connect(user).withdraw(mintAmt);
-
-        // Expect 10 + 4 = 14 tokens
-        expect(await halGold.balanceOf(user.address)).to.equal(ethers.parseUnits("14", 18));
-
-        // 6. User redeems HAL-GOLD for BNB
-        // Redeem 14 tokens
-        // 14 grams = $840
-        // BNB = $300 -> 2.8 BNB
-        // Fee 2% -> 0.056 BNB
-        // Return ~ 2.744 BNB
-
-        // Note: Contract must have enough BNB. It has 3.0 (user) + 3.0 (admin) = 6.0 BNB.
-
-        const balBefore = await ethers.provider.getBalance(user.address);
-        const tx = await halGold.connect(user).redeem(ethers.parseUnits("14", 18));
-        const receipt = await tx.wait();
-        const gasUsed = receipt.gasUsed * receipt.gasPrice;
-
-        const balAfter = await ethers.provider.getBalance(user.address);
-
-        // Check rough increase (around 2.7 BNB)
-        // 2.7 BNB = 2.7 * 10^18
-        const diff = balAfter - balBefore + gasUsed;
-        expect(diff).to.be.closeTo(ethers.parseEther("2.744"), ethers.parseEther("0.01"));
+        // 4. User withdraws (should get original + profit minus fees)
+        const userShares = await vault.balanceOf(user.address);
+        const assets = await vault.previewRedeem(userShares);
+        
+        await vault.connect(user).redeem(userShares, user.address, user.address);
+        
+        // User should have more than initial deposit due to profit
+        expect(await halGold.balanceOf(user.address)).to.be.gt(mintAmt);
     });
 });

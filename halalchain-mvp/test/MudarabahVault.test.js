@@ -6,24 +6,52 @@ describe("MudarabahVault", function () {
     let Vault, HalGold;
     let vault, halGold;
     let owner, user1, user2;
+    let accessControl, oracleHub, shariaRegistry;
+    let goldPriceFeed, goldReserveFeed;
 
     beforeEach(async function () {
         [owner, user1, user2] = await ethers.getSigners();
 
-        // Mock token or Real token? Real token is fine
+        // Deploy dependencies
+        const AccessControlManager = await ethers.getContractFactory("AccessControlManager");
+        accessControl = await AccessControlManager.deploy(owner.address);
+        
+        const OPERATOR_ROLE = await accessControl.OPERATOR_ROLE();
+        await accessControl.grantRole(OPERATOR_ROLE, owner.address);
+        
+        const MockAggregator = await ethers.getContractFactory("MockChainlinkAggregator");
+        goldPriceFeed = await MockAggregator.deploy(8, "Gold/USD");
+        goldReserveFeed = await MockAggregator.deploy(8, "Gold Reserve");
+        
+        await goldPriceFeed.updateAnswer(6000000000);
+        await goldReserveFeed.updateAnswer(100000000000000);
+        
+        const ShariaRegistry = await ethers.getContractFactory("ShariaRegistry");
+        shariaRegistry = await ShariaRegistry.deploy(accessControl.target);
+        
+        const OracleHub = await ethers.getContractFactory("OracleHub");
+        oracleHub = await OracleHub.deploy(accessControl.target);
+        
+        await oracleHub.setFeed(goldPriceFeed.target, goldPriceFeed.target, 3600);
+        await oracleHub.setFeed(goldReserveFeed.target, goldReserveFeed.target, 3600);
+        
         HalGold = await ethers.getContractFactory("HalGoldStablecoin");
-        halGold = await HalGold.deploy();
+        halGold = await HalGold.deploy(
+            accessControl.target,
+            oracleHub.target,
+            shariaRegistry.target,
+            goldReserveFeed.target,
+            goldPriceFeed.target
+        );
+        
+        await shariaRegistry.registerFatwa(halGold.target, "QmTest", [owner.address]);
 
         Vault = await ethers.getContractFactory("MudarabahVault");
         vault = await Vault.deploy(await halGold.getAddress());
 
-        // Give users some tokens
-        // Owner is admin of HalGold, can mint directly? No, mint requires BNB.
-        // But owner is owner, can set price? 
-        // Let's just mint normally.
-        const depositAmount = ethers.parseEther("100");
-        await halGold.connect(user1).mint(ethers.parseUnits("100", 18), { value: depositAmount });
-        await halGold.connect(user2).mint(ethers.parseUnits("200", 18), { value: ethers.parseEther("200") });
+        // Mint tokens for users
+        await halGold.mint(user1.address, ethers.parseEther("1000"));
+        await halGold.mint(user2.address, ethers.parseEther("2000"));
     });
 
     it("Should deposit and mint shares 1:1 initially", async function () {

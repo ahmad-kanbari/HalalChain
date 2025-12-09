@@ -52,6 +52,26 @@ contract StrategyManager is ReentrancyGuard {
     address public vault; // MudarabahPool or MudarabahVault
 
     // =========================================================
+    //                EMERGENCY PAUSE STATE
+    // =========================================================
+    
+    bool public emergencyPaused;
+
+    // =========================================================
+    //              CHAINLINK KEEPER STATE
+    // =========================================================
+    
+    uint256 public lastHarvestTime;
+    uint256 public harvestInterval = 24 hours;
+    uint256 public minHarvestAmount = 100 * 1e18; // Only harvest if > 100 HAL-GOLD pending
+
+    // =========================================================
+    //              SLIPPAGE PROTECTION
+    // =========================================================
+    
+    uint256 public defaultSlippageBps = 100; // 1% default slippage tolerance
+
+    // =========================================================
     //                        EVENTS
     // =========================================================
 
@@ -63,6 +83,12 @@ contract StrategyManager is ReentrancyGuard {
     event ReturnsHarvested(uint256 indexed strategyId, uint256 amount);
     event AllReturnsHarvested(uint256 totalHarvested);
     event VaultSet(address newVault);
+    event EmergencyPauseActivated(address indexed by, uint256 timestamp);
+    event EmergencyPauseDeactivated(address indexed by, uint256 timestamp);
+    event EmergencyWithdrawalCompleted(uint256 totalRecovered);
+    event StrategyEmergencyWithdrawFailed(uint256 indexed strategyId, address strategy);
+    event HarvestIntervalUpdated(uint256 newInterval);
+    event AutoHarvestExecuted(uint256 totalHarvested, uint256 gasUsed);
 
     // =========================================================
     //                      MODIFIERS
@@ -87,6 +113,11 @@ contract StrategyManager is ReentrancyGuard {
 
     modifier onlyVault() {
         require(msg.sender == vault, "Vault only");
+        _;
+    }
+
+    modifier whenNotEmergencyPaused() {
+        require(!emergencyPaused, "Emergency pause active");
         _;
     }
 
@@ -190,6 +221,7 @@ contract StrategyManager is ReentrancyGuard {
     function allocateToStrategy(uint256 strategyId, uint256 amount)
         external
         onlyManager
+        whenNotEmergencyPaused
         nonReentrant
     {
         StrategyInfo storage strat = strategies[strategyId];
@@ -209,7 +241,7 @@ contract StrategyManager is ReentrancyGuard {
 
         // Transfer from vault to strategy
         asset.safeTransferFrom(vault, address(this), amount);
-        asset.safeApprove(strat.strategy, amount);
+        asset.forceApprove(strat.strategy, amount);
 
         uint256 actualInvested = IInvestmentStrategy(strat.strategy).invest(amount);
 
@@ -259,20 +291,20 @@ contract StrategyManager is ReentrancyGuard {
         StrategyInfo storage strat = strategies[strategyId];
         require(strat.strategy != address(0), "Strategy not found");
 
-        uint256 returns = IInvestmentStrategy(strat.strategy).claimReturns();
+        uint256 harvested = IInvestmentStrategy(strat.strategy).claimReturns();
 
-        if (returns > 0) {
-            strat.totalReturns += returns;
+        if (harvested > 0) {
+            strat.totalReturns += harvested;
             strat.lastHarvest = block.timestamp;
-            totalReturnsEarned += returns;
+            totalReturnsEarned += harvested;
 
             // Send returns to vault
-            asset.safeTransfer(vault, returns);
+            asset.safeTransfer(vault, harvested);
 
-            emit ReturnsHarvested(strategyId, returns);
+            emit ReturnsHarvested(strategyId, harvested);
         }
 
-        return returns;
+        return harvested;
     }
 
     /**
@@ -285,14 +317,14 @@ contract StrategyManager is ReentrancyGuard {
         for (uint256 i = 0; i < nextStrategyId; i++) {
             StrategyInfo storage strat = strategies[i];
             if (strat.strategy != address(0) && strat.active && strat.allocation > 0) {
-                try IInvestmentStrategy(strat.strategy).claimReturns() returns (uint256 returns) {
-                    if (returns > 0) {
-                        strat.totalReturns += returns;
+                try IInvestmentStrategy(strat.strategy).claimReturns() returns (uint256 harvested) {
+                    if (harvested > 0) {
+                        strat.totalReturns += harvested;
                         strat.lastHarvest = block.timestamp;
-                        totalReturnsEarned += returns;
-                        totalHarvested += returns;
+                        totalReturnsEarned += harvested;
+                        totalHarvested += harvested;
 
-                        emit ReturnsHarvested(i, returns);
+                        emit ReturnsHarvested(i, harvested);
                     }
                 } catch {
                     // Skip strategies that fail, don't revert entire harvest
@@ -450,5 +482,236 @@ contract StrategyManager is ReentrancyGuard {
         require(_vault != address(0), "Invalid vault");
         vault = _vault;
         emit VaultSet(_vault);
+    }
+
+    // =========================================================
+    //              EMERGENCY PAUSE FUNCTIONS
+    // =========================================================
+
+    /**
+     * @notice Emergency pause all strategies and withdraw all capital
+     * @dev Only callable by admin or governance
+     */
+    function emergencyPauseAll() external onlyAdmin nonReentrant {
+        require(!emergencyPaused, "Already paused");
+        
+        emergencyPaused = true;
+        uint256 totalRecovered = 0;
+        
+        // Withdraw from all active strategies
+        for (uint256 i = 0; i < nextStrategyId; i++) {
+            StrategyInfo storage strat = strategies[i];
+            
+            if (strat.strategy != address(0) && strat.allocation > 0) {
+                try IInvestmentStrategy(strat.strategy).emergencyWithdraw() returns (uint256 recovered) {
+                    totalRecovered += recovered;
+                    strat.allocation = 0;
+                    totalAllocated -= recovered;
+                } catch {
+                    // Log failure but continue with other strategies
+                    emit StrategyEmergencyWithdrawFailed(i, strat.strategy);
+                }
+            }
+        }
+        
+        // Return all recovered funds to vault
+        if (totalRecovered > 0) {
+            asset.safeTransfer(vault, totalRecovered);
+        }
+        
+        emit EmergencyPauseActivated(msg.sender, block.timestamp);
+        emit EmergencyWithdrawalCompleted(totalRecovered);
+    }
+
+    /**
+     * @notice Deactivate emergency pause
+     */
+    function deactivateEmergencyPause() external onlyAdmin {
+        require(emergencyPaused, "Not paused");
+        emergencyPaused = false;
+        emit EmergencyPauseDeactivated(msg.sender, block.timestamp);
+    }
+
+    // =========================================================
+    //           CHAINLINK KEEPER INTEGRATION
+    // =========================================================
+
+    /**
+     * @notice Chainlink Keeper compatible check function
+     * @return upkeepNeeded Whether harvest is needed
+     * @return performData Encoded data for performUpkeep
+     */
+    function checkUpkeep(bytes calldata /* checkData */)
+        external
+        view
+        returns (bool upkeepNeeded, bytes memory performData)
+    {
+        // Check if enough time has passed
+        bool timeElapsed = block.timestamp >= lastHarvestTime + harvestInterval;
+        
+        // Check if there are pending returns worth harvesting
+        uint256 totalPending = 0;
+        for (uint256 i = 0; i < nextStrategyId; i++) {
+            if (strategies[i].active && strategies[i].allocation > 0) {
+                try IInvestmentStrategy(strategies[i].strategy).getPendingReturns() returns (uint256 pending) {
+                    totalPending += pending;
+                } catch {}
+            }
+        }
+        
+        bool worthHarvesting = totalPending >= minHarvestAmount;
+        
+        upkeepNeeded = timeElapsed && worthHarvesting && !emergencyPaused;
+        performData = abi.encode(totalPending);
+    }
+
+    /**
+     * @notice Chainlink Keeper performUpkeep function
+     * @param performData Data from checkUpkeep
+     */
+    function performUpkeep(bytes calldata performData) external nonReentrant {
+        uint256 startGas = gasleft();
+        
+        // Verify conditions are still met
+        (bool upkeepNeeded, ) = this.checkUpkeep("");
+        require(upkeepNeeded, "Upkeep not needed");
+        
+        // Execute harvest
+        uint256 totalHarvested = _harvestAllInternal();
+        
+        lastHarvestTime = block.timestamp;
+        
+        uint256 gasUsed = startGas - gasleft();
+        emit AutoHarvestExecuted(totalHarvested, gasUsed);
+    }
+
+    /**
+     * @notice Internal harvest function used by both manual and automatic harvest
+     */
+    function _harvestAllInternal() internal returns (uint256) {
+        uint256 totalHarvested = 0;
+
+        for (uint256 i = 0; i < nextStrategyId; i++) {
+            StrategyInfo storage strat = strategies[i];
+            if (strat.strategy != address(0) && strat.active && strat.allocation > 0) {
+                try IInvestmentStrategy(strat.strategy).claimReturns() returns (uint256 harvested) {
+                    if (harvested > 0) {
+                        strat.totalReturns += harvested;
+                        strat.lastHarvest = block.timestamp;
+                        totalReturnsEarned += harvested;
+                        totalHarvested += harvested;
+
+                        emit ReturnsHarvested(i, harvested);
+                    }
+                } catch {
+                    // Skip strategies that fail, don't revert entire harvest
+                    continue;
+                }
+            }
+        }
+
+        if (totalHarvested > 0) {
+            // Send all harvested returns to vault
+            asset.safeTransfer(vault, totalHarvested);
+            emit AllReturnsHarvested(totalHarvested);
+            
+            // Trigger vault to process withdrawal queue
+            (bool success, ) = vault.call(
+                abi.encodeWithSignature("processWithdrawalQueue()")
+            );
+            // Don't revert if processing fails
+        }
+
+        return totalHarvested;
+    }
+
+    /**
+     * @notice Update harvest interval
+     */
+    function setHarvestInterval(uint256 newInterval) external onlyAdmin {
+        require(newInterval >= 1 hours && newInterval <= 7 days, "Invalid interval");
+        harvestInterval = newInterval;
+        emit HarvestIntervalUpdated(newInterval);
+    }
+
+    /**
+     * @notice Update minimum harvest amount
+     */
+    function setMinHarvestAmount(uint256 amount) external onlyAdmin {
+        minHarvestAmount = amount;
+    }
+
+    // =========================================================
+    //            SLIPPAGE PROTECTION FUNCTIONS
+    // =========================================================
+
+    /**
+     * @notice Withdraw from strategy with slippage protection
+     * @param strategyId Strategy to withdraw from
+     * @param amount Amount to withdraw
+     * @param minReturn Minimum acceptable return (0 = use default slippage)
+     */
+    function withdrawFromStrategyWithSlippage(
+        uint256 strategyId,
+        uint256 amount,
+        uint256 minReturn
+    ) external onlyManager nonReentrant returns (uint256) {
+        StrategyInfo storage strat = strategies[strategyId];
+        require(strat.strategy != address(0), "Strategy not found");
+        require(amount > 0, "Amount must be > 0");
+        require(strat.allocation >= amount, "Insufficient allocation");
+        
+        // If minReturn not specified, calculate with default slippage
+        if (minReturn == 0) {
+            minReturn = (amount * (10000 - defaultSlippageBps)) / 10000;
+        }
+        
+        // Execute withdrawal
+        uint256 actualReturn = IInvestmentStrategy(strat.strategy).withdraw(amount);
+        
+        // Check slippage protection
+        require(actualReturn >= minReturn, "Slippage too high");
+        
+        // Update accounting
+        strat.allocation -= amount;
+        totalAllocated -= amount;
+        
+        // Return funds to vault
+        asset.safeTransfer(vault, actualReturn);
+        
+        emit CapitalWithdrawn(strategyId, actualReturn);
+        
+        return actualReturn;
+    }
+
+    /**
+     * @notice Calculate expected return from withdrawal
+     * @param strategyId Strategy ID
+     * @param amount Amount to withdraw
+     * @return expectedReturn Expected return amount
+     */
+    function previewWithdrawal(uint256 strategyId, uint256 amount)
+        external
+        view
+        returns (uint256 expectedReturn)
+    {
+        StrategyInfo storage strat = strategies[strategyId];
+        
+        // Most strategies should return 1:1, but some may have accrued returns
+        uint256 balance = IInvestmentStrategy(strat.strategy).getBalance();
+        uint256 allocation = strat.allocation;
+        
+        if (allocation == 0) return 0;
+        
+        // Proportional return based on current balance
+        expectedReturn = (amount * balance) / allocation;
+    }
+
+    /**
+     * @notice Set default slippage tolerance
+     */
+    function setDefaultSlippage(uint256 bps) external onlyAdmin {
+        require(bps <= 1000, "Max 10% slippage"); // Safety limit
+        defaultSlippageBps = bps;
     }
 }

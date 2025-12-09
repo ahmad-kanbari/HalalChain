@@ -155,7 +155,7 @@ contract SukukInvestmentStrategy is IInvestmentStrategy, IERC1155Receiver, Reent
                 if (toInvest < 100 * 1e18) continue;
 
                 // Approve and invest
-                assetToken.safeApprove(address(sukukManager), toInvest);
+                assetToken.forceApprove(address(sukukManager), toInvest);
                 sukukManager.invest(i, toInvest);
 
                 // Track investment

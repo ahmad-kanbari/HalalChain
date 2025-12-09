@@ -36,9 +36,29 @@ contract MudarabahPool is ERC4626, ReentrancyGuard {
     /// @notice Whitelisted destinations for capital deployment (e.g. Sukuk Contracts)
     mapping(address => bool) public allowedTargets;
 
+    // =========================================================
+    //                   WITHDRAWAL QUEUE
+    // =========================================================
+    
+    struct WithdrawalRequest {
+        address user;
+        uint256 shares;
+        uint256 requestTime;
+        bool fulfilled;
+    }
+
+    mapping(uint256 => WithdrawalRequest) public withdrawalQueue;
+    uint256 public queueHead; // First unfulfilled request
+    uint256 public queueTail; // Next request ID
+
+    uint256 public constant MIN_LIQUIDITY_RESERVE_BPS = 2000; // 20%
+
     event ProfitRealized(uint256 totalEth, uint256 netToPool, uint256 feeToManager);
     event CapitalDeployed(address indexed target, uint256 amount);
     event CapitalReturned(address indexed source, uint256 amount);
+    event WithdrawalQueued(uint256 indexed requestId, address indexed user, uint256 shares);
+    event WithdrawalProcessed(uint256 indexed requestId, address indexed user, uint256 amount);
+    event WithdrawalCancelled(uint256 indexed requestId, address indexed user);
 
     // =========================================================
     //                       FUNCTIONS
@@ -193,5 +213,125 @@ contract MudarabahPool is ERC4626, ReentrancyGuard {
 
         if (!success) return 0;
         return abi.decode(data, (uint256));
+    }
+
+    // =========================================================
+    //             WITHDRAWAL QUEUE FUNCTIONS
+    // =========================================================
+
+    /**
+     * @notice Request withdrawal (queued if insufficient liquidity)
+     */
+    function requestWithdrawal(uint256 shares) external nonReentrant {
+        require(shares > 0, "Shares must be > 0");
+        require(balanceOf(msg.sender) >= shares, "Insufficient shares");
+        
+        uint256 assets = previewRedeem(shares);
+        uint256 availableLiquidity = _getAvailableLiquidity();
+        
+        if (assets <= availableLiquidity) {
+            // Sufficient liquidity - process immediately
+            _processWithdrawal(msg.sender, shares, assets);
+        } else {
+            // Insufficient liquidity - queue request
+            _queueWithdrawal(msg.sender, shares);
+        }
+    }
+
+    function _queueWithdrawal(address user, uint256 shares) internal {
+        // Transfer shares to contract (locked until processed)
+        _transfer(user, address(this), shares);
+        
+        uint256 requestId = queueTail++;
+        withdrawalQueue[requestId] = WithdrawalRequest({
+            user: user,
+            shares: shares,
+            requestTime: block.timestamp,
+            fulfilled: false
+        });
+        
+        emit WithdrawalQueued(requestId, user, shares);
+    }
+
+    function _processWithdrawal(address user, uint256 shares, uint256 assets) internal {
+        // Standard ERC4626 withdrawal
+        _burn(user, shares);
+        IERC20(asset()).safeTransfer(user, assets);
+    }
+
+    /**
+     * @notice Process queued withdrawals (called after capital returns from strategies)
+     */
+    function processWithdrawalQueue() public nonReentrant {
+        uint256 availableLiquidity = _getAvailableLiquidity();
+        
+        while (queueHead < queueTail && availableLiquidity > 0) {
+            WithdrawalRequest storage request = withdrawalQueue[queueHead];
+            
+            if (request.fulfilled) {
+                queueHead++;
+                continue;
+            }
+            
+            uint256 assets = previewRedeem(request.shares);
+            
+            if (assets <= availableLiquidity) {
+                // Process this request
+                request.fulfilled = true;
+                
+                // Burn shares (already held by contract)
+                _burn(address(this), request.shares);
+                
+                // Transfer assets to user
+                IERC20(asset()).safeTransfer(request.user, assets);
+                
+                availableLiquidity -= assets;
+                
+                emit WithdrawalProcessed(queueHead, request.user, assets);
+                queueHead++;
+            } else {
+                // Not enough liquidity for this request, stop processing
+                break;
+            }
+        }
+    }
+
+    /**
+     * @notice Cancel queued withdrawal request
+     */
+    function cancelWithdrawalRequest(uint256 requestId) external nonReentrant {
+        WithdrawalRequest storage request = withdrawalQueue[requestId];
+        require(request.user == msg.sender, "Not your request");
+        require(!request.fulfilled, "Already processed");
+        require(requestId >= queueHead, "Already processed");
+        
+        request.fulfilled = true;
+        
+        // Return shares to user
+        _transfer(address(this), msg.sender, request.shares);
+        
+        emit WithdrawalCancelled(requestId, msg.sender);
+    }
+
+    /**
+     * @notice Get available liquidity (respecting reserve requirement)
+     */
+    function _getAvailableLiquidity() internal view returns (uint256) {
+        uint256 totalAssets_ = totalAssets();
+        uint256 requiredReserve = (totalAssets_ * MIN_LIQUIDITY_RESERVE_BPS) / 10000;
+        uint256 currentLiquidity = IERC20(asset()).balanceOf(address(this));
+        
+        if (currentLiquidity <= requiredReserve) {
+            return 0;
+        }
+        
+        return currentLiquidity - requiredReserve;
+    }
+
+    /**
+     * @notice Get pending withdrawal queue length
+     */
+    function getPendingWithdrawalsCount() external view returns (uint256) {
+        return queueTail - queueHead;
     }
 }
