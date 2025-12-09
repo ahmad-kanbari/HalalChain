@@ -308,7 +308,7 @@ A Sharia-compliant DeFi platform on BNB Smart Chain.
 - Vault: 0x789...
 
 ## Tech Stack
-- Solidity 0.8.20
+- Solidity 0.8.24
 - React + Vite
 - ethers.js v6
 ```

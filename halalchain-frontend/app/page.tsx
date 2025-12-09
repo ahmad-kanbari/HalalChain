@@ -11,6 +11,7 @@ import { ShariaRegistryCard } from '@/components/ShariaRegistryCard';
 import { HalalDAOCard } from '@/components/HalalDAOCard';
 import { OracleHubCard } from '@/components/OracleHubCard';
 import { TreasuryCard } from '@/components/TreasuryCard';
+import { StrategyManagerCard } from '@/components/StrategyManagerCard';
 
 export default function Home() {
   const { isConnected } = useAccount();
@@ -69,6 +70,7 @@ export default function Home() {
               <HalalDAOCard />
               <OracleHubCard />
               <TreasuryCard />
+              <StrategyManagerCard />
             </div>
           </div>
         )}

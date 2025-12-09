@@ -1,0 +1,73 @@
+[dotenv@17.2.3] injecting env (0) from .env -- tip: 🔐 encrypt with Dotenvx: https://dotenvx.com
+
+
+  HalGoldStablecoin
+    ✔ Should update prices correctly
+    ✔ Should return correct collateral ratio
+    1) Should mint HAL-GOLD with sufficient collateral
+    ✔ Should fail to mint with insufficient collateral
+    2) Should redeem HAL-GOLD for BNB
+
+  HalalToken
+    ✔ Should have correct initial supply
+    ✔ Should have correct name and symbol
+    ✔ Should allow admin to pause and unpause
+    ✔ Should not allow non-admin to pause
+    ✔ Should burn tokens
+
+  MudarabahVault
+    3) "before each" hook for "Should deposit and mint shares 1:1 initially"
+
+  Integration Flow
+    4) Full User Flow: Mint -> Invest -> Profit -> Withdraw -> Redeem
+
+
+  8 passing (408ms)
+  4 failing
+
+  1) HalGoldStablecoin
+       Should mint HAL-GOLD with sufficient collateral:
+     Error: VM Exception while processing transaction: reverted with reason string 'Insufficient collateral ratio'
+    at HalGoldStablecoin.mint (contracts/HalGoldStablecoin.sol:46)
+    at EdrProviderWrapper.request (node_modules/hardhat/src/internal/hardhat-network/provider/provider.ts:415:41)
+    at HardhatEthersSigner.sendTransaction (node_modules/@nomicfoundation/hardhat-ethers/src/signers.ts:181:18)
+    at send (node_modules/ethers/src.ts/contract/contract.ts:313:20)
+    at Proxy.mint (node_modules/ethers/src.ts/contract/contract.ts:352:16)
+    at Context.<anonymous> (file:///Users/ahmadkanbari/Desktop/Hala_BlockChain/halalchain-mvp/test/HalGoldStablecoin.test.js:44:9)
+  
+
+  2) HalGoldStablecoin
+       Should redeem HAL-GOLD for BNB:
+     Error: VM Exception while processing transaction: reverted with reason string 'Insufficient collateral ratio'
+    at HalGoldStablecoin.mint (contracts/HalGoldStablecoin.sol:46)
+    at EdrProviderWrapper.request (node_modules/hardhat/src/internal/hardhat-network/provider/provider.ts:415:41)
+    at HardhatEthersSigner.sendTransaction (node_modules/@nomicfoundation/hardhat-ethers/src/signers.ts:181:18)
+    at send (node_modules/ethers/src.ts/contract/contract.ts:313:20)
+    at Proxy.mint (node_modules/ethers/src.ts/contract/contract.ts:352:16)
+    at Context.<anonymous> (file:///Users/ahmadkanbari/Desktop/Hala_BlockChain/halalchain-mvp/test/HalGoldStablecoin.test.js:65:9)
+  
+
+  3) MudarabahVault
+       "before each" hook for "Should deposit and mint shares 1:1 initially":
+     Error: VM Exception while processing transaction: reverted with reason string 'Insufficient collateral ratio'
+    at HalGoldStablecoin.mint (contracts/HalGoldStablecoin.sol:46)
+    at EdrProviderWrapper.request (node_modules/hardhat/src/internal/hardhat-network/provider/provider.ts:415:41)
+    at HardhatEthersSigner.sendTransaction (node_modules/@nomicfoundation/hardhat-ethers/src/signers.ts:181:18)
+    at send (node_modules/ethers/src.ts/contract/contract.ts:313:20)
+    at Proxy.mint (node_modules/ethers/src.ts/contract/contract.ts:352:16)
+    at Context.<anonymous> (file:///Users/ahmadkanbari/Desktop/Hala_BlockChain/halalchain-mvp/test/MudarabahVault.test.js:25:9)
+  
+
+  4) Integration Flow
+       Full User Flow: Mint -> Invest -> Profit -> Withdraw -> Redeem:
+     Error: VM Exception while processing transaction: reverted with reason string 'Insufficient collateral ratio'
+    at HalGoldStablecoin.mint (contracts/HalGoldStablecoin.sol:46)
+    at EdrProviderWrapper.request (node_modules/hardhat/src/internal/hardhat-network/provider/provider.ts:415:41)
+    at HardhatEthersSigner.sendTransaction (node_modules/@nomicfoundation/hardhat-ethers/src/signers.ts:181:18)
+    at send (node_modules/ethers/src.ts/contract/contract.ts:313:20)
+    at Proxy.mint (node_modules/ethers/src.ts/contract/contract.ts:352:16)
+    at Context.<anonymous> (file:///Users/ahmadkanbari/Desktop/Hala_BlockChain/halalchain-mvp/test/integration.test.js:31:9)
+  
+
+
+

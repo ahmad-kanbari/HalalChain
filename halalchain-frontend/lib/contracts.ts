@@ -11,6 +11,10 @@ export const CONTRACTS = {
   Treasury: '0x0000000000000000000000000000000000000000',
   ZakatVault: '0x0000000000000000000000000000000000000000',
   HalalDAO: '0x0000000000000000000000000000000000000000',
+  StrategyManager: '0x0000000000000000000000000000000000000000',
+  SukukInvestmentStrategy: '0x0000000000000000000000000000000000000000',
+  TreasuryBillStrategy: '0x0000000000000000000000000000000000000000',
+  HalalBusinessFinancing: '0x0000000000000000000000000000000000000000',
 };
 
 // Simplified ABIs - Only include functions we'll use in the frontend
@@ -112,5 +116,32 @@ export const ABIS = {
     'function totalAllocated() view returns (uint256)',
     'function allocations(address) view returns (uint256)',
     'function executeTransaction(address target, uint256 value, bytes calldata data)',
+  ],
+  StrategyManager: [
+    'function totalAllocated() view returns (uint256)',
+    'function totalReturnsEarned() view returns (uint256)',
+    'function getTotalAPY() view returns (uint256)',
+    'function getTotalPendingReturns() view returns (uint256)',
+    'function getStrategy(uint256 strategyId) view returns (address strategy, uint256 allocation, uint256 maxAllocationBps, uint256 totalReturns, uint256 lastHarvest, bool active, string name)',
+    'function addStrategy(address strategy, uint256 maxAllocationBps, string calldata name)',
+    'function allocateToStrategy(uint256 strategyId, uint256 amount)',
+    'function withdrawFromStrategy(uint256 strategyId, uint256 amount) returns (uint256)',
+    'function harvestAll() returns (uint256)',
+    'function harvestStrategy(uint256 strategyId) returns (uint256)',
+    'function nextStrategyId() view returns (uint256)',
+  ],
+  IInvestmentStrategy: [
+    'function invest(uint256 amount) returns (uint256)',
+    'function withdraw(uint256 amount) returns (uint256)',
+    'function claimReturns() returns (uint256)',
+    'function emergencyWithdraw() returns (uint256)',
+    'function getBalance() view returns (uint256)',
+    'function getTotalReturns() view returns (uint256)',
+    'function getPendingReturns() view returns (uint256)',
+    'function getAPY() view returns (uint256)',
+    'function isShariaCompliant() view returns (bool)',
+    'function strategyName() view returns (string)',
+    'function asset() view returns (address)',
+    'function isActive() view returns (bool)',
   ],
 };

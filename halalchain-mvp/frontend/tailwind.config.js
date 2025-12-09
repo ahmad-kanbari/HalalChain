@@ -1,0 +1,17 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+    content: [
+        "./index.html",
+        "./src/**/*.{js,ts,jsx,tsx}",
+    ],
+    theme: {
+        extend: {
+            colors: {
+                primary: '#10b981', // Emerald 500 (Halal Green)
+                secondary: '#fbbf24', // Amber 400 (Gold)
+                dark: '#111827', // Gray 900
+            },
+        },
+    },
+    plugins: [],
+}
